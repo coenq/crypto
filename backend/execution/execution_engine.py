@@ -6,6 +6,14 @@ import os, sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from backend.risk.risk_manager import check_risk_limits, register_trade
 
+
+def safe_float(x):
+    try:
+        return float(x) if x is not None else None
+    except:
+        return None
+
+
 class ExecutionEngine:
     def __init__(self, starting_balance=50000, engine=None):
         self.balance = starting_balance
@@ -77,7 +85,6 @@ class ExecutionEngine:
                 position_size = usd_to_use / self.position
                 signal['position_size'] = position_size
 
-                # Enforce 1% profit before sell
                 price_increase_pct = ((price - self.position) / self.position) * 100
                 if price_increase_pct < 0.45:
                     reason = f"Trade skipped: price only up {price_increase_pct:.2f}% (min required: 1%)"
@@ -85,7 +92,6 @@ class ExecutionEngine:
                     self._log_trade(timestamp, action, price, strategy, reason)
                     return False
 
-                # PnL and fees
                 entry_fee = position_size * self.position * fee_rate
                 exit_fee = position_size * price * fee_rate
                 total_fees = entry_fee + exit_fee
@@ -154,15 +160,15 @@ class ExecutionEngine:
                     '''), {
                         'timestamp': timestamp,
                         'action': action,
-                        'price': price,
+                        'price': safe_float(price),
                         'strategy': strategy,
                         'reason': reason,
                         'entry_time': entry_time,
-                        'entry_price': entry_price,
-                        'exit_price': exit_price,
-                        'gross_pnl': gross_pnl,
-                        'fees': fees,
-                        'net_pnl': net_pnl
+                        'entry_price': safe_float(entry_price),
+                        'exit_price': safe_float(exit_price),
+                        'gross_pnl': safe_float(gross_pnl),
+                        'fees': safe_float(fees),
+                        'net_pnl': safe_float(net_pnl)
                     })
             except Exception as e:
                 print(f"[DB Error] ❌ Failed to log trade: {e}")
