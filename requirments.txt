@@ -1,0 +1,32 @@
+# Core
+pandas
+numpy
+scikit-learn
+joblib
+sqlalchemy
+psycopg2-binary
+requests
+
+# Technical Analysis
+TA-Lib
+
+# Binance API
+python-binance
+
+# Scheduler
+apscheduler
+
+# Machine Learning Models
+lightgbm
+
+# Websocket (used by python-binance)
+websockets
+
+# Timezone support
+pytz
+
+# Optional (only if you're using TensorFlow for LSTM in another phase)
+# tensorflow
+
+# Optional (used in some environments to avoid warnings)
+tqdm
