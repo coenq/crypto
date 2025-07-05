@@ -33,7 +33,7 @@ engine = create_engine(DATABASE_URL)
 utc = pytz.UTC
 
 # === FUNCTIONS ===
-def load_market_data(symbol, interval="1m", limit=100):
+def load_market_data(symbol, interval="1m", limit=2000):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
         response = requests.get(url)
