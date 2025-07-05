@@ -1,3 +1,5 @@
+# dashboard.py
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objs as go
@@ -14,24 +16,24 @@ DB_HOST = 'aws-0-eu-west-2.pooler.supabase.com'
 DB_PORT = '5432'
 DB_NAME = 'postgres'
 STARTING_BALANCE = 50000
-SYMBOL_DEFAULT = "BTCUSDT"
-INTERVAL_DEFAULT = "1m"
+SYMBOL_LIST = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]
 
-# === PAGE SETUP ===
-st.set_page_config(page_title="Trading Bot Dashboard", layout="wide")
-st.title("📊 BTC/USDT Smart Trading Bot Dashboard")
+# === STREAMLIT SETUP ===
+st.set_page_config(page_title="📊 Trading Bot Dashboard", layout="wide")
+st_autorefresh(interval=10_000, key="refresh")  # Refresh every 10 seconds
+st.sidebar.header("⚙️ Controls")
 
-# Auto-refresh every 10 seconds
-st_autorefresh(interval=10_000, key="refresh")
+symbol = st.sidebar.selectbox("Symbol", SYMBOL_LIST, index=0)
+interval = st.sidebar.selectbox("Timeframe", ["1m", "5m", "15m", "1h", "4h", "1d"], index=0)
+strategy_filter = st.sidebar.selectbox("Strategy", ["All", "RSI", "EMA Crossover", "MACD", "Bollinger Bands", "ML Strategy"])
 
-# SQLAlchemy engine
+# === DATABASE ===
 DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 engine = create_engine(DATABASE_URL)
-
 utc = pytz.UTC
 
-# === LIVE MARKET DATA FROM BINANCE ===
-def load_market_data(symbol="BTCUSDT", interval="1m", limit=100):
+# === FUNCTIONS ===
+def load_market_data(symbol, interval="1m", limit=100):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
         response = requests.get(url)
@@ -45,130 +47,122 @@ def load_market_data(symbol="BTCUSDT", interval="1m", limit=100):
         ])
 
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df['open'] = df['open'].astype(float)
-        df['high'] = df['high'].astype(float)
-        df['low'] = df['low'].astype(float)
-        df['close'] = df['close'].astype(float)
-
+        df = df.astype({'open': float, 'high': float, 'low': float, 'close': float})
         return df[['timestamp', 'open', 'high', 'low', 'close']]
 
     except Exception as e:
         st.error(f"❌ Binance API error: {e}")
         return pd.DataFrame()
 
-# === LOAD STRATEGY SIGNALS ===
-def load_signals(strategy=None):
+def load_signals(strategy=None, symbol=None):
     try:
-        df = pd.read_sql("SELECT * FROM strategy_signals WHERE executed = TRUE ORDER BY timestamp DESC LIMIT 100", engine)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+        query = "SELECT * FROM strategy_signals WHERE executed = TRUE"
+        filters = []
+
         if strategy and strategy != "All":
-            df = df[df['strategy'] == strategy]
+            filters.append(f"strategy = '{strategy}'")
+        if symbol:
+            filters.append(f"symbol = '{symbol.lower()}'")
+
+        if filters:
+            query += " AND " + " AND ".join(filters)
+
+        query += " ORDER BY timestamp DESC LIMIT 100"
+        df = pd.read_sql(query, engine)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
         return df
+
     except Exception as e:
-        st.error(f"❌ Signal loading error: {e}")
+        st.error(f"❌ Failed to load signals: {e}")
         return pd.DataFrame()
 
-# === LOAD PnL ===
-def calculate_pnl():
+def calculate_pnl(symbol=None):
     try:
-        df = pd.read_sql("SELECT * FROM trades ORDER BY timestamp", engine)
+        query = "SELECT * FROM trades"
+        if symbol:
+            query += f" WHERE symbol = '{symbol.lower()}'"
+        query += " ORDER BY timestamp DESC"
+
+        df = pd.read_sql(query, engine)
         pnl_total = df['net_pnl'].sum()
-        trades = df[df['net_pnl'].notnull()]
+        trade_count = df[df['net_pnl'].notnull()].shape[0]
         balance = STARTING_BALANCE + pnl_total
-        return balance, pnl_total, len(trades)
+        return balance, pnl_total, trade_count
     except Exception as e:
-        st.error(f"❌ PnL calculation error: {e}")
+        st.error(f"❌ Failed to calculate PnL: {e}")
         return STARTING_BALANCE, 0, 0
 
-# === CANDLESTICK CHART ===
-def plot_candles(df, signals):
+def plot_candlestick(df, signals):
     if df.empty:
         return go.Figure()
 
     fig = go.Figure()
 
-    # Candlestick
+    # Candlesticks
     fig.add_trace(go.Candlestick(
         x=df['timestamp'],
         open=df['open'],
         high=df['high'],
         low=df['low'],
         close=df['close'],
-        name='Price',
+        name='Candles',
         increasing_line_color='lime',
-        decreasing_line_color='red',
-        line_width=2
+        decreasing_line_color='red'
     ))
 
-    # Strategy Signal Markers
+    # Signals
     if not signals.empty:
-        buy_signals = signals[signals['action'].str.lower() == 'buy']
-        sell_signals = signals[signals['action'].str.lower() == 'sell']
+        buy = signals[signals['action'].str.lower() == 'buy']
+        sell = signals[signals['action'].str.lower() == 'sell']
 
         fig.add_trace(go.Scatter(
-            x=buy_signals['timestamp'],
-            y=buy_signals['price'],
+            x=buy['timestamp'], y=buy['price'],
             mode='markers+text',
-            name='Buy',
+            name='Buy Signal',
             marker=dict(color='green', size=10, symbol='triangle-up'),
-            text=['BUY'] * len(buy_signals),
+            text=['BUY'] * len(buy),
             textposition="top center"
         ))
 
         fig.add_trace(go.Scatter(
-            x=sell_signals['timestamp'],
-            y=sell_signals['price'],
+            x=sell['timestamp'], y=sell['price'],
             mode='markers+text',
-            name='Sell',
+            name='Sell Signal',
             marker=dict(color='red', size=10, symbol='triangle-down'),
-            text=['SELL'] * len(sell_signals),
+            text=['SELL'] * len(sell),
             textposition="bottom center"
         ))
 
-    # Layout Styling
     fig.update_layout(
-        title="📈 Live Candlestick Chart with Trade Signals",
+        template="plotly_dark",
+        title=f"{symbol} Price Chart + Executed Signals",
         xaxis_title="Time",
         yaxis_title="Price (USDT)",
-        template="plotly_dark",
         xaxis_rangeslider_visible=False,
         hovermode="x unified",
         height=600,
-        margin=dict(l=20, r=20, t=40, b=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        margin=dict(l=10, r=10, t=50, b=20),
+        legend=dict(orientation="h", y=1.02, x=1, xanchor="right", yanchor="bottom")
     )
 
     return fig
 
+# === DATA LOADING ===
+market_df = load_market_data(symbol, interval)
+signals_df = load_signals(strategy_filter, symbol)
+balance, pnl, trades = calculate_pnl(symbol)
 
-# === SIDEBAR ===
-st.sidebar.header("🔧 Controls")
-strategy_filter = st.sidebar.selectbox(
-    "Filter by Strategy",
-    ["All", "evaluate_rsi", "evaluate_ema_crossover", "evaluate_macd", "evaluate_bollinger", "evaluate_lstm"]
-)
+# === DISPLAY ===
+st.subheader("📈 Price Chart & Executed Signals")
+st.plotly_chart(plot_candlestick(market_df, signals_df), use_container_width=True)
 
-symbol = st.sidebar.text_input("Symbol (Binance)", SYMBOL_DEFAULT)
-interval = st.sidebar.selectbox("Timeframe", ["1m", "5m", "15m", "1h", "4h", "1d"], index=0)
-
-# === MAIN ===
-market_df = load_market_data(symbol, interval, 5000)
-signals_df = load_signals(strategy_filter)
-
-# === CHART ===
-st.subheader("📈 Price Action + Strategy Signals")
-st.plotly_chart(plot_candles(market_df, signals_df), use_container_width=True)
-
-# === METRICS ===
-balance, pnl, trade_count = calculate_pnl()
 col1, col2, col3 = st.columns(3)
-col1.metric("💰 Balance", f"${balance:.2f}")
-col2.metric("📈 Total PnL", f"${pnl:.2f}")
-col3.metric("📊 Trades Executed", trade_count)
+col1.metric("💰 Balance", f"${balance:,.2f}")
+col2.metric("📈 Net PnL", f"${pnl:,.2f}")
+col3.metric("📊 Trades", f"{trades}")
 
-# === SIGNAL LOGS ===
-st.subheader("📋 Strategy Signal Log")
+st.subheader("📋 Executed Strategy Signals")
 if not signals_df.empty:
     st.dataframe(signals_df[['timestamp', 'strategy', 'action', 'price', 'reason']], use_container_width=True)
 else:
-    st.info("No recent signals found.")
+    st.info("No executed signals found.")
