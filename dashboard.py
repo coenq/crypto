@@ -80,17 +80,23 @@ def calculate_pnl(symbol=None):
     try:
         query = "SELECT * FROM trades"
         if symbol:
-            query += f" WHERE symbol = '{symbol.lower()}'"
+            query += f" WHERE LOWER(symbol) = '{symbol.lower()}'"
         query += " ORDER BY timestamp DESC"
 
         df = pd.read_sql(query, engine)
-        pnl_total = df['net_pnl'].sum()
+
+        if df.empty or 'net_pnl' not in df.columns:
+            return STARTING_BALANCE, 0.0, 0
+
+        pnl_total = df['net_pnl'].fillna(0).sum()
         trade_count = df[df['net_pnl'].notnull()].shape[0]
         balance = STARTING_BALANCE + pnl_total
         return balance, pnl_total, trade_count
+
     except Exception as e:
         st.error(f"❌ Failed to calculate PnL: {e}")
         return STARTING_BALANCE, 0, 0
+
 
 def plot_candlestick(df, signals):
     if df.empty:
